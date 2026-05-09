@@ -14,12 +14,15 @@ dependencies = [
     "redis>=5.0.0",
     "aio-pika<=9.6.2",
     "httpx>=0.28.1",
+    "aiomysql>=0.0.21",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
     "fakeredis>=2.1.0",
+    "aiosqlite>=0.18.0",
+    "ruff>=0.15.12",
 ]
 
 [project.scripts]

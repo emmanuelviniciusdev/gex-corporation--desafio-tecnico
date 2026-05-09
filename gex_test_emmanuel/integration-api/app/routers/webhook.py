@@ -10,7 +10,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.padding import PKCS7
 from fastapi import APIRouter, Depends, Header, Request, Response, status
 from pydantic import ValidationError
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
@@ -79,7 +80,7 @@ def _normalize_payload(payload_data: dict) -> tuple[dict, bool, bool]:
     return normalized, invalid_email, invalid_phone
 
 
-def _check_idempotency(transaction_id: str, event: str, correlation_id: str, db: Session) -> bool:
+async def _check_idempotency(transaction_id: str, event: str, correlation_id: str, db: AsyncSession) -> bool:
     redis_client = get_redis()
     lock_key = f"{IDEMPOTENCY_KEY_PREFIX}{transaction_id}:{event}"
 
@@ -87,11 +88,12 @@ def _check_idempotency(transaction_id: str, event: str, correlation_id: str, db:
     if not acquired:
         return True
 
-    existing = (
-        db.query(ProcessedWebhook)
-        .filter(ProcessedWebhook.transaction_id == transaction_id, ProcessedWebhook.event == event)
-        .first()
+    result = await db.execute(
+        select(ProcessedWebhook).where(
+            ProcessedWebhook.transaction_id == transaction_id, ProcessedWebhook.event == event
+        )
     )
+    existing = result.scalars().first()
 
     if existing:
         return True
@@ -99,7 +101,7 @@ def _check_idempotency(transaction_id: str, event: str, correlation_id: str, db:
     return False
 
 
-def _mark_processed(transaction_id: str, event: str, correlation_id: str, db: Session) -> int:
+async def _mark_processed(transaction_id: str, event: str, correlation_id: str, db: AsyncSession) -> int:
     processed = ProcessedWebhook(
         transaction_id=transaction_id,
         event=event,
@@ -107,23 +109,22 @@ def _mark_processed(transaction_id: str, event: str, correlation_id: str, db: Se
         processed_at=datetime.now(UTC),
     )
     db.add(processed)
-    db.commit()
+    await db.commit()
     try:
-        db.refresh(processed)
+        await db.refresh(processed)
     except Exception:
         pass
     return int(processed.id)
 
 
-# TODO: All database operations must be async.
-def _persist_raw_payload(
+async def _persist_raw_payload(
     correlation_id: str,
     gateway: str,
     received_at: datetime,
     headers: dict,
     original_body: str,
     decrypted_body: str | None,
-    db: Session,
+    db: AsyncSession,
 ) -> int:
     raw_payload = RawPayload(
         correlation_id=correlation_id,
@@ -134,9 +135,9 @@ def _persist_raw_payload(
         decrypted_body=decrypted_body,
     )
     db.add(raw_payload)
-    db.commit()
+    await db.commit()
     try:
-        db.refresh(raw_payload)
+        await db.refresh(raw_payload)
     except Exception:
         pass
     return int(raw_payload.id)
@@ -146,7 +147,7 @@ def _persist_raw_payload(
 async def receive_webhook(
     gateway: Literal["grummer", "lous"],
     request: Request,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     x_gr_encrypted: str | None = Header(default=None, alias="X-GR-Encrypted"),
 ):
     correlation_id = str(uuid.uuid4())
@@ -209,7 +210,7 @@ async def receive_webhook(
     else:
         payload_data = incoming_payload if isinstance(incoming_payload, dict) else {}
 
-    raw_id = _persist_raw_payload(
+    raw_id = await _persist_raw_payload(
         correlation_id, gateway, received_at, headers, original_body, decrypted_body, db
     )
     logger.info("Raw payload persisted", extra={"correlation_id": correlation_id, "raw_id": raw_id})
@@ -224,6 +225,7 @@ async def receive_webhook(
             logger.info("Published decrypt_failed to RabbitMQ", extra={"correlation_id": correlation_id})
         except Exception:
             logger.exception("Failed to publish decrypt_failed message")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     normalized_payload, invalid_email, invalid_phone = _normalize_payload(payload_data)
 
@@ -246,12 +248,13 @@ async def receive_webhook(
             logger.info("Published schema_invalid to RabbitMQ", extra={"correlation_id": correlation_id})
         except Exception:
             logger.exception("Failed to publish schema_invalid message")
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     transaction_id = normalized_payload.get("transaction_id")
     event = normalized_payload.get("event")
 
     if transaction_id and event:
-        is_duplicate = _check_idempotency(transaction_id, event, correlation_id, db)
+        is_duplicate = await _check_idempotency(transaction_id, event, correlation_id, db)
         if is_duplicate:
             logger.info(
                 "Duplicate webhook detected",
@@ -263,7 +266,7 @@ async def receive_webhook(
             )
             return DuplicateResponse(status="duplicate", correlation_id=correlation_id)
 
-        processed_id = _mark_processed(transaction_id, event, correlation_id, db)
+        processed_id = await _mark_processed(transaction_id, event, correlation_id, db)
         logger.info(
             "Webhook marked as processed",
             extra={

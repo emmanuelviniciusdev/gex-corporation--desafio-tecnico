@@ -1,11 +1,18 @@
 import base64
 import os
+import tempfile
 from unittest.mock import patch
 
 TEST_KEY = b"0123456789abcdef0123456789abcdef"
 TEST_KEY_B64 = base64.b64encode(TEST_KEY).decode()
 
-os.environ["DATABASE_URL"] = "sqlite:///:memory:"
+# Create a temporary sqlite file database so both async and sync engines can
+# access the same database during tests.
+_tmp_db = tempfile.NamedTemporaryFile(prefix="test_db_", suffix=".db", delete=False)
+_db_path = _tmp_db.name
+_tmp_db.close()
+
+os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{_db_path}"
 os.environ["GRUMMER_AES256_KEY_BASE64"] = TEST_KEY_B64
 
 import fakeredis  # noqa: E402
@@ -19,27 +26,23 @@ from cryptography.hazmat.primitives.padding import PKCS7  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import create_engine  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
 
-from app.core.database import Base, get_db  # noqa: E402
+from app.core.database import Base, async_session, get_db  # noqa: E402
 from app.db import ProcessedWebhook, RawPayload  # noqa: E402
 from app.main import app  # noqa: E402
 
-engine = create_engine(
-    "sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool
-)
+# Create a synchronous engine bound to the same sqlite file so tests can run
+# synchronous queries directly for assertions.
+engine = create_engine(f"sqlite:///{_db_path}", connect_args={"check_same_thread": False})
 Base.metadata.create_all(bind=engine)
 TestSession = sessionmaker(bind=engine)
 
 _current_mock_redis = None
 
 
-def override_get_db():
-    db = TestSession()
-    try:
-        yield db
-    finally:
-        db.close()
+async def override_get_db():
+    async with async_session() as session:
+        yield session
 
 
 app.dependency_overrides[get_db] = override_get_db
