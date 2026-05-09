@@ -1,0 +1,13 @@
+.venv
+.git
+.gitignore
+.pytest_cache
+.env
+__pycache__
+*.pyc
+*.pyo
+.idea
+.DS_Store
+tests
+.python-version
+.abacusai

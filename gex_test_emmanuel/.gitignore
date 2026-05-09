@@ -1,0 +1,74 @@
+.idea
+.ipynb_checkpoints
+.mypy_cache
+.vscode
+__pycache__
+.pytest_cache
+htmlcov
+dist
+site
+.coverage*
+coverage.xml
+.netlify
+test.db
+log.txt
+Pipfile.lock
+env3.*
+env
+docs_build
+site_build
+venv
+docs.zip
+archive.zip
+
+# vim temporary files
+*~
+.*.sw?
+.cache
+
+# macOS
+.DS_Store
+
+.codspeed
+
+# Environment variables
+integration-api/.env
+.env.*
+!.env.example
+
+# Python
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+eggs/
+.eggs/
+wheels/
+pip-wheel-metadata/
+uv.lock
+
+# Virtual environments (nested, per-service)
+**/venv/
+**/.venv/
+**/env/
+**/.env/
+
+# Type checking
+.pyright/
+
+# Ruff / linting
+.ruff_cache/
+
+# Test artifacts (nested)
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+**/coverage.xml
+
+# Build artifacts (nested)
+**/dist/
+**/__pycache__/
+**/*.egg-info/
+
+**/.abacusai/

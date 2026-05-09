@@ -1,0 +1,38 @@
+[project]
+name = "gex-test-emmanuel"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort
+    "C4",   # flake8-comprehensions
+    "B",    # flake8-bugbear
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # fastapi dependency injection pattern
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+known-third-party = ["fastapi", "pydantic", "sqlalchemy"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.12",
+]
