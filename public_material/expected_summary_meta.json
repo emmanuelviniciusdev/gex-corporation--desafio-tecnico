@@ -1,0 +1,16 @@
+{
+  "total_payloads": 200,
+  "expected_distribution": {
+    "valid_approved_unique_in_lead_events": 125,
+    "dlq_decrypt_failed_min": 15,
+    "dlq_schema_failed_min": 20,
+    "duplicates_natural_key_min": 20,
+    "non_approved_discarded": 20
+  },
+  "notes": [
+    "Os n\u00fameros acima refletem o resultado m\u00ednimo esperado se o candidato implementar a limpeza padr\u00e3o.",
+    "Toler\u00e2ncia: \u00b12 leads em valid_approved_unique conforme rigor de valida\u00e7\u00e3o de e-mail/telefone do candidato.",
+    "Total de payloads \u00fanicos pela chave (transaction_id, event) entre os approved v\u00e1lidos: 125",
+    "Os duplicados s\u00e3o propositais (10 grummer com IV diferente e mesmo plaintext, 10 lous id\u00eanticos)."
+  ]
+}
