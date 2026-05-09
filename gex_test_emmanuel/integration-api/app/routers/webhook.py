@@ -17,6 +17,7 @@ from app.core.database import get_db
 from app.core.redis import get_redis
 from app.db import ProcessedWebhook, RawPayload
 from app.models.webhook import DuplicateResponse, EncryptedPayload, Payload
+from app.utils.rabbitmq import publish_message_from_app
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -98,7 +99,7 @@ def _check_idempotency(transaction_id: str, event: str, correlation_id: str, db:
     return False
 
 
-def _mark_processed(transaction_id: str, event: str, correlation_id: str, db: Session) -> None:
+def _mark_processed(transaction_id: str, event: str, correlation_id: str, db: Session) -> int:
     processed = ProcessedWebhook(
         transaction_id=transaction_id,
         event=event,
@@ -107,8 +108,14 @@ def _mark_processed(transaction_id: str, event: str, correlation_id: str, db: Se
     )
     db.add(processed)
     db.commit()
+    try:
+        db.refresh(processed)
+    except Exception:
+        pass
+    return int(processed.id)
 
 
+# TODO: All database operations must be async.
 def _persist_raw_payload(
     correlation_id: str,
     gateway: str,
@@ -117,7 +124,7 @@ def _persist_raw_payload(
     original_body: str,
     decrypted_body: str | None,
     db: Session,
-) -> None:
+) -> int:
     raw_payload = RawPayload(
         correlation_id=correlation_id,
         gateway=gateway,
@@ -128,6 +135,11 @@ def _persist_raw_payload(
     )
     db.add(raw_payload)
     db.commit()
+    try:
+        db.refresh(raw_payload)
+    except Exception:
+        pass
+    return int(raw_payload.id)
 
 
 @router.post("/webhooks/{gateway}", response_model=None)
@@ -142,6 +154,8 @@ async def receive_webhook(
     validation_errors: list[dict] = []
     schema_valid = True
     decrypted_body: str | None = None
+    decrypt_failed_reason: str | None = None
+    schema_invalid_reason: str | None = None
 
     logger.info("Webhook received", extra={"correlation_id": correlation_id, "gateway": gateway})
 
@@ -178,6 +192,7 @@ async def receive_webhook(
             except ValidationError as error:
                 schema_valid = False
                 validation_errors.extend(error.errors())
+                decrypt_failed_reason = json.dumps(error.errors(), default=str)
                 payload_data = incoming_payload if isinstance(incoming_payload, dict) else {}
                 logger.warning(
                     "Encrypted payload validation failed", extra={"correlation_id": correlation_id}
@@ -185,6 +200,7 @@ async def receive_webhook(
             except Exception as error:
                 schema_valid = False
                 validation_errors.append({"message": str(error)})
+                decrypt_failed_reason = str(error)
                 payload_data = incoming_payload if isinstance(incoming_payload, dict) else {}
                 logger.warning(
                     "Decryption failed",
@@ -193,10 +209,21 @@ async def receive_webhook(
     else:
         payload_data = incoming_payload if isinstance(incoming_payload, dict) else {}
 
-    _persist_raw_payload(
+    raw_id = _persist_raw_payload(
         correlation_id, gateway, received_at, headers, original_body, decrypted_body, db
     )
-    logger.info("Raw payload persisted", extra={"correlation_id": correlation_id})
+    logger.info("Raw payload persisted", extra={"correlation_id": correlation_id, "raw_id": raw_id})
+
+    if decrypt_failed_reason:
+        try:
+            await publish_message_from_app(
+                request.app,
+                "lead.dead.decrypt_failed",
+                {"id_raw_payload": raw_id, "id_processed_webhook": None, "error_message": decrypt_failed_reason},
+            )
+            logger.info("Published decrypt_failed to RabbitMQ", extra={"correlation_id": correlation_id})
+        except Exception:
+            logger.exception("Failed to publish decrypt_failed message")
 
     normalized_payload, invalid_email, invalid_phone = _normalize_payload(payload_data)
 
@@ -204,8 +231,21 @@ async def receive_webhook(
         Payload.model_validate(normalized_payload)
     except ValidationError as error:
         schema_valid = False
+        schema_invalid_reason = json.dumps(error.errors(), default=str)
         validation_errors.extend(error.errors())
         logger.warning("Payload schema validation failed", extra={"correlation_id": correlation_id})
+
+    if not schema_valid:
+        reason = schema_invalid_reason or json.dumps(validation_errors, default=str)
+        try:
+            await publish_message_from_app(
+                request.app,
+                "lead.dead.schema_invalid",
+                {"id_raw_payload": raw_id, "id_processed_webhook": None, "error_message": reason},
+            )
+            logger.info("Published schema_invalid to RabbitMQ", extra={"correlation_id": correlation_id})
+        except Exception:
+            logger.exception("Failed to publish schema_invalid message")
 
     transaction_id = normalized_payload.get("transaction_id")
     event = normalized_payload.get("event")
@@ -223,15 +263,33 @@ async def receive_webhook(
             )
             return DuplicateResponse(status="duplicate", correlation_id=correlation_id)
 
-        _mark_processed(transaction_id, event, correlation_id, db)
+        processed_id = _mark_processed(transaction_id, event, correlation_id, db)
         logger.info(
             "Webhook marked as processed",
             extra={
                 "correlation_id": correlation_id,
                 "transaction_id": transaction_id,
                 "event": event,
+                "processed_id": processed_id,
             },
         )
+
+        # Publish when order.approved and payment.status == approved
+        if event == "order.approved":
+            payment_status = None
+            payment = normalized_payload.get("payment")
+            if isinstance(payment, dict):
+                payment_status = payment.get("status")
+            if payment_status == "approved":
+                try:
+                    await publish_message_from_app(
+                        request.app,
+                        "lead.received",
+                        {"id_raw_payload": raw_id, "id_processed_webhook": processed_id, "error_message": None},
+                    )
+                    logger.info("Published lead.received to RabbitMQ", extra={"correlation_id": correlation_id})
+                except Exception:
+                    logger.exception("Failed to publish lead.received message")
 
     logger.info(
         "Webhook processing completed",

@@ -20,6 +20,27 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
+# Initialize RabbitMQ publisher instance on startup (lazy connect)
+@app.on_event("startup")
+async def startup_event():
+    try:
+        from app.utils.rabbitmq import RabbitPublisher
+
+        # create publisher instance only; connection is established lazily on first publish
+        app.state.rabbit = RabbitPublisher(settings.rabbitmq_url)
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Failed to initialize RabbitMQ publisher instance")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    rabbit = getattr(app.state, "rabbit", None)
+    if rabbit:
+        await rabbit.close()
+
+
 def main():
     import uvicorn
 

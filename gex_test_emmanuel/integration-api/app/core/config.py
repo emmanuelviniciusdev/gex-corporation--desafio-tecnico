@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     grummer_aes256_key_base64: str = ""
     database_url: str = "mysql+pymysql://root:password@localhost:3306/db_integration"
     redis_url: str = "redis://localhost:6379/0"
+    rabbitmq_url: str = "amqp://guest:guest@rabbitmq:5672/"
 
 
 settings = Settings()

@@ -42,6 +42,8 @@ RUN groupadd --gid 1000 appgroup && \
 
 COPY --from=builder /app /app
 
+
+
 # Ensure the virtual environment created during the builder stage is
 # available on PATH so CLI entrypoints installed into .venv/bin (like
 # `uv`) can be executed in the final image.

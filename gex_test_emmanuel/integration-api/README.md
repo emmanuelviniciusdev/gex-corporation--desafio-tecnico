@@ -258,4 +258,29 @@ Duplicate response example (when duplicate detected):
 - The endpoint enforces that `transaction_time` includes timezone information; otherwise schema validation will fail.
 - Idempotency lock TTL is 30 seconds and Redis lock key prefix is `webhook:lock:`.
 
+## RabbitMQ integration
+This service can publish events to RabbitMQ. When running via the provided docker-compose the repository includes a RabbitMQ service (management UI exposed on port 15672).
+
+Configuration:
+- Environment variable: `RABBITMQ_URL` (e.g. `amqp://guest:guest@rabbitmq:5672/`)
+- FastAPI will create a RabbitPublisher instance on startup and connect lazily on first publish.
+
+Published routing keys / queues:
+- `lead.received` — published when payload is valid AND `event == "order.approved"` AND `payment.status == "approved"`.
+- `lead.dead.decrypt_failed` — published when decryption or EncryptedPayload validation fails (contains an error message).
+- `lead.dead.schema_invalid` — published when normalized payload fails schema validation (contains an error message).
+
+Message schema (JSON):
+```
+{
+  "id_raw_payload": int,
+  "id_processed_webhook": int | null,
+  "error_message": string | null
+}
+```
+
+Notes:
+- Publishing is best-effort in this implementation: if RabbitMQ is not reachable or the publisher is not initialized messages are dropped and a warning is logged.
+- For stronger delivery guarantees consider implementing an outbox pattern or transactional publishing.
+
 ---
