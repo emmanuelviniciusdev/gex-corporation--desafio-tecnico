@@ -32,7 +32,7 @@ archive.zip
 .codspeed
 
 # Environment variables
-integration-api/.env
+integration_api/.env
 .env.*
 !.env.example
 

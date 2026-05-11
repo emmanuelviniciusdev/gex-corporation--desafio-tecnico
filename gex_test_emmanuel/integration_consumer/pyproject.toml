@@ -1,0 +1,15 @@
+[project]
+name = "integration-consumer"
+version = "0.1.0"
+description = "Async RabbitMQ consumer for webhook events"
+requires-python = ">=3.13"
+dependencies = [
+    "aio-pika>=8.3.0",
+    "aiomysql>=0.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+]

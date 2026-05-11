@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, patch
 
 from tests.conftest import VALID_PAYLOAD
@@ -15,8 +16,13 @@ def test_publish_lead_received_on_order_approved(client):
         assert payload["error_message"] is None
         assert isinstance(payload["id_raw_payload"], int)
         assert isinstance(payload["id_processed_webhook"], int)
-
-
+        assert payload["gateway"] == "lous"
+        assert "received_at" in payload
+        assert isinstance(payload["received_at"], str)
+        assert "payload" in payload
+        assert isinstance(payload["payload"], str)
+        decoded = json.loads(payload["payload"])
+        assert decoded["transaction_id"] == "123"
 def test_no_publish_when_payment_not_approved(client):
     payload = dict(VALID_PAYLOAD)
     payload["payment"] = dict(payload["payment"])
@@ -43,6 +49,12 @@ def test_publish_dead_on_decrypt_failed(client):
         assert payload["id_raw_payload"] is not None
         assert payload["id_processed_webhook"] is None
         assert payload["error_message"] is not None
+        assert payload["gateway"] == "grummer"
+        assert "payload" in payload
+        assert isinstance(payload["payload"], str)
+        decoded = json.loads(payload["payload"])
+        # decrypted or original payload should contain either iv (grummer) or transaction_id
+        assert "iv" in decoded or "transaction_id" in decoded
 
 
 def test_publish_dead_on_schema_invalid(client):
@@ -56,3 +68,8 @@ def test_publish_dead_on_schema_invalid(client):
         assert payload["id_raw_payload"] is not None
         assert payload["id_processed_webhook"] is None
         assert payload["error_message"] is not None
+        assert payload["gateway"] == "lous"
+        assert "payload" in payload
+        assert isinstance(payload["payload"], str)
+        decoded = json.loads(payload["payload"])
+        assert "transaction_id" in decoded

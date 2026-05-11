@@ -275,6 +275,7 @@ Message schema (JSON):
 {
   "id_raw_payload": int,
   "id_processed_webhook": int | null,
+  "payload": string,                
   "error_message": string | null
 }
 ```
