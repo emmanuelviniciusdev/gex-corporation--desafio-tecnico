@@ -216,7 +216,8 @@ async def _process_once(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio
 
             # compute persisted timestamp and lag after commit
             persisted_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            lag_seconds = int((persisted_at - gateway_time).total_seconds())
+            # use transaction_time (the actual event time) to compute lag
+            lag_seconds = int((persisted_at - transaction_time_dt).total_seconds())
 
             async with conn.cursor() as cur:
                 await _insert_lead_event(cur, order_id, transaction_id, correlation_id, event, gateway_time, persisted_at, lag_seconds)
