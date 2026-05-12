@@ -1,7 +1,7 @@
 import asyncio
 import time
 
-from integration_consumer.consumer import AsyncConsumer, InMemoryMessageSource
+from consumer import AsyncConsumer, InMemoryMessageSource
 
 
 def test_processes_messages_concurrently() -> None:

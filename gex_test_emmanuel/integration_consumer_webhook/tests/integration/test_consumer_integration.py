@@ -1,8 +1,12 @@
 import asyncio
+import os
 
-from integration_consumer.consumer import AsyncConsumer
-from integration_consumer import config
+from consumer import AsyncConsumer
+import config
 
+# todo: review & apply adjustments.
+# todo: review & apply adjustments.
+# todo: review & apply adjustments.
 
 def test_rabbitmq_integration() -> None:
     """Integration test against a real RabbitMQ instance.
@@ -11,7 +15,8 @@ def test_rabbitmq_integration() -> None:
     aio-pika is installed. It demonstrates how to wire a real aio-pika
     queue into the AsyncConsumer by providing an async iterator wrapper.
     """
-    RABBITMQ_URL = config.RABBITMQ_URL
+    # prefer an explicit environment override so test fixtures can start a broker
+    RABBITMQ_URL = os.environ.get("RABBITMQ_URL") or config.RABBITMQ_URL
     if not RABBITMQ_URL:
         import pytest
 

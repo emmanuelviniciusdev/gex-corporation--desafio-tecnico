@@ -20,7 +20,7 @@ from typing import Any
 import aio_pika
 import aiomysql
 
-logger = logging.getLogger("integration_consumer.services.lead_received")
+logger = logging.getLogger("integration_consumer_webhook.services.lead_received")
 
 QUEUE_NAME = "lead.received"
 
@@ -201,7 +201,7 @@ async def _process_once(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio
 
     gateway = _get_gateway_from_message(msg_obj)
     raw_payload_id = msg_obj.get("id_raw_payload")
-    correlation_id = msg_obj.get("correlation_id") or str(uuid.uuid4())
+    correlation_id = msg_obj.get("correlation_id")
 
     # DB operations
     try:

@@ -1,7 +1,7 @@
 """Main consumer that can run multiple queue-specific services concurrently.
 
 To add a new queue service:
-- create integration_consumer/services/<service>.py exposing make_handler(pool, publish_channel)
+- create integration_consumer_webhook/services/<service>.py exposing make_handler(pool, publish_channel)
 - add the module to the SERVICES mapping below.
 """
 
@@ -18,12 +18,15 @@ import aiomysql
 try:
     from .consumer import AsyncConsumer, AsyncMessageSource
 except Exception:  # pragma: no cover - support running as a script
-    from integration_consumer.consumer import AsyncConsumer, AsyncMessageSource
+    from consumer import AsyncConsumer, AsyncMessageSource
 
 # import services
-from integration_consumer.services import lead_received as lead_received_service
+try:
+    from .services import lead_received as lead_received_service
+except Exception:  # pragma: no cover - support running as a script
+    from services import lead_received as lead_received_service
 
-logger = logging.getLogger("integration_consumer.main")
+logger = logging.getLogger("integration_consumer_webhook.main")
 
 # DB defaults - override with environment variables
 DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")

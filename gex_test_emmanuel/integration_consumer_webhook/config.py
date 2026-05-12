@@ -1,4 +1,4 @@
-"""Configuration for integration_consumer read from environment variables."""
+"""Configuration for integration_consumer_webhook read from environment variables."""
 
 from __future__ import annotations
 

@@ -2,7 +2,7 @@ import os
 import sys
 import types
 
-pkg_name = "integration_consumer"
+pkg_name = "integration_consumer_webhook"
 # package directory is the parent of the tests/ folder
 pkg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 

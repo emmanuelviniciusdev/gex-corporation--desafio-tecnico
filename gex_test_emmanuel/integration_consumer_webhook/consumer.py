@@ -12,7 +12,10 @@ from __future__ import annotations
 import asyncio
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Optional, Set
 
-from .config import CONSUMER_CONCURRENCY
+try:
+    from .config import CONSUMER_CONCURRENCY
+except Exception:  # pragma: no cover - support running as a script
+    from config import CONSUMER_CONCURRENCY
 
 Handler = Callable[[Any], Awaitable[None]]
 
@@ -77,21 +80,41 @@ class AsyncConsumer:
                 self._tasks.add(task)
                 # ensure bookkeeping and semaphore release when task completes
                 task.add_done_callback(self._task_done_cb)
+                # debug scheduling
+                try:
+                    print(f"[consumer] scheduled task for message: {message!r}")
+                except Exception:
+                    pass
         except asyncio.CancelledError:
             # Consumer was asked to stop; fall through to draining tasks
             pass
         finally:
-            await self._drain_tasks()
+            # Ensure draining handler tasks is shielded from cancellation of the run task
+            await asyncio.shield(self._drain_tasks())
 
     async def _run_handler(self, message: Any) -> None:
         try:
+            # debug start
+            try:
+                print(f"[consumer] handler start: {message!r}")
+            except Exception:
+                pass
             await self._handler(message)
+            # debug end
+            try:
+                print(f"[consumer] handler end: {message!r}")
+            except Exception:
+                pass
         except Exception as exc:  # pragma: no cover - decision/error handling
             # In a real app, replace prints with structured logging
-            print(f"integration_consumer: handler raised: {exc!r}")
+            print(f"integration_consumer_webhook: handler raised: {exc!r}")
 
     def _task_done_cb(self, task: asyncio.Task) -> None:
         # Called in the event loop when a task completes
+        try:
+            print(f"[consumer] _task_done_cb: removing task {task!r}")
+        except Exception:
+            pass
         self._tasks.discard(task)
         try:
             self._semaphore.release()
@@ -114,17 +137,37 @@ class AsyncConsumer:
 
     async def _drain_tasks(self) -> None:
         tasks = list(self._tasks)
+        try:
+            print(f"[consumer] _drain_tasks: found {len(tasks)} tasks")
+        except Exception:
+            pass
         if not tasks:
             return
         await asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            print(f"[consumer] _drain_tasks: gathered tasks")
+        except Exception:
+            pass
         self._tasks.clear()
 
     async def stop(self) -> None:
         """Stop consumption and wait for running handlers to finish."""
+        try:
+            print(f"[consumer] stop: run_task is {self._run_task!r}, done={(self._run_task.done() if self._run_task else 'N/A')}" )
+        except Exception:
+            pass
         if self._run_task is not None and not self._run_task.done():
             self._run_task.cancel()
             try:
                 await self._run_task
             except asyncio.CancelledError:
                 pass
+        try:
+            print(f"[consumer] stop: awaiting _drain_tasks()")
+        except Exception:
+            pass
         await self._drain_tasks()
+        try:
+            print(f"[consumer] stop: _drain_tasks complete")
+        except Exception:
+            pass
