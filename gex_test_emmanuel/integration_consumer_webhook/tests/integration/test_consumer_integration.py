@@ -1,12 +1,9 @@
 import asyncio
 import os
 
-from consumer import AsyncConsumer
 import config
+from consumer import AsyncConsumer
 
-# todo: review & apply adjustments.
-# todo: review & apply adjustments.
-# todo: review & apply adjustments.
 
 def test_rabbitmq_integration() -> None:
     """Integration test against a real RabbitMQ instance.

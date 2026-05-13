@@ -3,7 +3,6 @@ import json
 from unittest.mock import patch
 
 import pytest
-from tests.conftest import VALID_PAYLOAD, encrypt_payload
 
 from app.models.webhook import EncryptedPayload
 from app.routers.webhook import (
@@ -12,6 +11,7 @@ from app.routers.webhook import (
     _normalize_payload,
     _normalize_phone,
 )
+from tests.conftest import VALID_PAYLOAD, encrypt_payload
 
 
 class TestNormalizeEmail:

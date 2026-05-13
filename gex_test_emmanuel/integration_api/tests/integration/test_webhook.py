@@ -1,8 +1,7 @@
 import json
 
-from tests.conftest import VALID_PAYLOAD, TestSession, encrypt_payload, mock_redis
-
 from app.db import ProcessedWebhook, RawPayload
+from tests.conftest import VALID_PAYLOAD, TestSession, encrypt_payload, mock_redis
 
 
 class TestWebhookIntegrationLous:

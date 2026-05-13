@@ -12,9 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import uuid
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import aio_pika
@@ -43,9 +42,9 @@ def _parse_iso_datetime(value: str) -> datetime:
         value = value[:-1] + "+00:00"
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     # return naive UTC datetime suitable for MySQL DATETIME(6)
-    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.astimezone(UTC).replace(tzinfo=None)
 
 
 async def _ensure_lead(conn: aiomysql.Connection, cur: aiomysql.Cursor, email: str, email_raw: str, first_name: str, last_name: str, phone: str | None, phone_raw: str | None, phone_valid: int, country: str | None) -> int:
@@ -160,13 +159,13 @@ async def _process_once(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio
 
     try:
         transaction_time_dt = _parse_iso_datetime(transaction_time_raw)
-    except Exception as exc:  # pragma: no cover - validation path
+    except Exception:  # pragma: no cover - validation path
         logger.exception("invalid transaction_time format")
         return
 
     try:
         gateway_time = _parse_iso_datetime(received_at_raw)
-    except Exception as exc:  # pragma: no cover - validation path
+    except Exception:  # pragma: no cover - validation path
         logger.exception("invalid received_at format")
         return
 
@@ -215,7 +214,7 @@ async def _process_once(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio
             await conn.commit()
 
             # compute persisted timestamp and lag after commit
-            persisted_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            persisted_at = datetime.now(UTC).replace(tzinfo=None)
             # use transaction_time (the actual event time) to compute lag
             lag_seconds = int((persisted_at - transaction_time_dt).total_seconds())
 
@@ -242,13 +241,11 @@ async def _process_with_retry(msg_obj: dict, pool: aiomysql.Pool, publish_channe
     """
     max_attempts = 3
     delays = [1, 4, 16]
-    last_exc = None
     for attempt in range(1, max_attempts + 1):
         try:
             await _process_once(msg_obj, pool, publish_channel)
             return True
         except ProcessingError as exc:
-            last_exc = exc
             logger.warning("processing attempt %d/%d failed: %s", attempt, max_attempts, exc)
             if attempt < max_attempts:
                 await asyncio.sleep(delays[attempt - 1])
@@ -264,7 +261,6 @@ async def _process_with_retry(msg_obj: dict, pool: aiomysql.Pool, publish_channe
             return False
         except Exception as exc:
             # unexpected exceptions treated as fatal for retries
-            last_exc = exc
             logger.exception("unexpected error during processing (attempt %d)", attempt)
             if attempt < max_attempts:
                 await asyncio.sleep(delays[attempt - 1])

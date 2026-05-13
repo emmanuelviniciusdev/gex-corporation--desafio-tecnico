@@ -1,0 +1,1 @@
+# integration_consumer_channels package

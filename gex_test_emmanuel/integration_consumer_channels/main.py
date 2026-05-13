@@ -1,8 +1,7 @@
-"""Main consumer that can run multiple queue-specific services concurrently.
+"""Main consumer that runs the channels queue service.
 
-To add a new queue service:
-- create integration_consumer_webhook/services/<service>.py exposing make_handler(pool, publish_channel)
-- add the module to the SERVICES mapping below.
+To add other queue handlers, add modules under services/ exposing make_handler(...)
+and register them in SERVICES mapping.
 """
 
 from __future__ import annotations
@@ -23,25 +22,18 @@ except Exception:  # pragma: no cover - support running as a script
 
 # import services
 try:
-    from .services import lead_received as lead_received_service
+    from .services import sms as sms_service
 except Exception:  # pragma: no cover - support running as a script
-    from services import lead_received as lead_received_service
+    from services import sms as sms_service
 
-logger = logging.getLogger("integration_consumer_webhook.main")
-
-# DB defaults - override with environment variables
-DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
-DB_PORT = int(os.environ.get("DB_PORT", "3306"))
-DB_USER = os.environ.get("DB_USER", "root")
-DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
-DB_NAME = os.environ.get("DB_NAME", "db_integration")
+logger = logging.getLogger("integration_consumer_channels.main")
 
 RABBITMQ_URL = os.environ.get("RABBITMQ_URL")
 MQ_PREFETCH = int(os.environ.get("MQ_PREFETCH", "10"))
 
 # Register services here: queue_name -> service module
 SERVICES: dict[str, Any] = {
-    lead_received_service.QUEUE_NAME: lead_received_service,
+    sms_service.QUEUE_NAME: sms_service,
 }
 
 
@@ -62,6 +54,13 @@ async def run() -> None:
         logger.error("RABBITMQ_URL not set")
         return
 
+    # DB defaults - override with environment variables
+    DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
+    DB_PORT = int(os.environ.get("DB_PORT", "3306"))
+    DB_USER = os.environ.get("DB_USER", "root")
+    DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
+    DB_NAME = os.environ.get("DB_NAME", "db_integration")
+
     db_pool = await aiomysql.create_pool(host=DB_HOST, port=DB_PORT, user=DB_USER, password=DB_PASSWORD, db=DB_NAME, autocommit=False, maxsize=10)
 
     connection = await aio_pika.connect_robust(RABBITMQ_URL)
@@ -80,7 +79,7 @@ async def run() -> None:
                 continue
 
             source = AioPikaSource(queue)
-            handler_factory: Callable[[aiomysql.Pool, aio_pika.Channel], Callable[[Any], Awaitable[None]]] = service.make_handler
+            handler_factory: Callable[[Any, aio_pika.Channel], Callable[[Any], Awaitable[None]]] = service.make_handler
             handler = handler_factory(db_pool, channel)
             consumer = AsyncConsumer(source, handler)
             await consumer.start()

@@ -72,3 +72,4 @@ uv.lock
 **/*.egg-info/
 
 **/.abacusai/
+**/.junie/

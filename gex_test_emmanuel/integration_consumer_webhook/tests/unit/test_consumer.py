@@ -50,4 +50,4 @@ def test_stop_waits_for_tasks_finish() -> None:
         return processed
 
     processed = asyncio.run(_test())
-    assert set(processed) == set([1, 2, 3])
+    assert set(processed) == {1, 2, 3}

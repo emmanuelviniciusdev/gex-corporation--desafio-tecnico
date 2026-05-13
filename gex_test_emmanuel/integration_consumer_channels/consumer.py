@@ -108,7 +108,7 @@ class AsyncConsumer:
                 pass
         except Exception as exc:  # pragma: no cover - decision/error handling
             # In a real app, replace prints with structured logging
-            print(f"integration_consumer_webhook: handler raised: {exc!r}")
+            print(f"integration_consumer_channels: handler raised: {exc!r}")
 
     def _task_done_cb(self, task: asyncio.Task) -> None:
         # Called in the event loop when a task completes
