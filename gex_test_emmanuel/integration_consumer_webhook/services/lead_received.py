@@ -47,51 +47,55 @@ def _parse_iso_datetime(value: str) -> datetime:
     return dt.astimezone(UTC).replace(tzinfo=None)
 
 
-async def _ensure_lead(conn: aiomysql.Connection, cur: aiomysql.Cursor, email: str, email_raw: str, first_name: str, last_name: str, phone: str | None, phone_raw: str | None, phone_valid: int, country: str | None) -> int:
-    await cur.execute("SELECT id FROM leads WHERE email = %s", (email,))
+async def _call_sp_insert_lead(
+    cur: aiomysql.Cursor,
+    email: str,
+    email_raw: str,
+    first_name: str,
+    last_name: str,
+    phone: str | None,
+    phone_raw: str | None,
+    phone_valid: int,
+    country: str | None,
+    raw_payload_id: int | None,
+    gateway: str,
+    transaction_id: str,
+    transaction_time: datetime,
+    product_id: str,
+    product_name: str,
+    product_niche: str | None,
+    quantity: int,
+    amount_usd: float,
+    payment_method: str,
+    payment_status: str,
+    correlation_id: str,
+    event: str,
+    gateway_time: datetime,
+    persisted_at: datetime,
+    lag_seconds: int,
+) -> tuple[int, int, int]:
+    """Call the sp_insert_lead stored procedure.
+
+    Atomically inserts (or retrieves existing) rows in leads, orders, and
+    lead_events within a single transaction managed by the stored procedure.
+
+    Returns (lead_id, order_id, event_id).
+    """
+    await cur.callproc(
+        "sp_insert_lead",
+        (
+            email, email_raw, first_name, last_name,
+            phone, phone_raw, phone_valid, country,
+            raw_payload_id, gateway, transaction_id, transaction_time,
+            product_id, product_name, product_niche,
+            quantity, amount_usd, payment_method, payment_status,
+            correlation_id, event, gateway_time, persisted_at, lag_seconds,
+            0, 0, 0,  # OUT: p_lead_id, p_order_id, p_event_id
+        ),
+    )
+    await cur.execute("SELECT @_sp_insert_lead_25, @_sp_insert_lead_26, @_sp_insert_lead_27")
     row = await cur.fetchone()
-    if row:
-        return int(row[0])
-    await cur.execute(
-        "INSERT INTO leads (email, email_raw, first_name, last_name, phone, phone_raw, phone_valid, country, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(6), NOW(6))",
-        (email, email_raw, first_name, last_name, phone, phone_raw, phone_valid, country),
-    )
-    lid = cur.lastrowid
-    if not lid:
-        await cur.execute("SELECT LAST_INSERT_ID()")
-        row = await cur.fetchone()
-        lid = row[0]
-    return int(lid)
-
-
-async def _ensure_order(conn: aiomysql.Connection, cur: aiomysql.Cursor, lead_id: int, raw_payload_id: int | None, gateway: str, transaction_id: str, transaction_time: datetime, product_id: str, product_name: str, product_niche: str | None, quantity: int, amount_usd: float, payment_method: str, payment_status: str) -> int:
-    await cur.execute("SELECT id FROM orders WHERE gateway = %s AND transaction_id = %s", (gateway, transaction_id))
-    row = await cur.fetchone()
-    if row:
-        return int(row[0])
-    await cur.execute(
-        "INSERT INTO orders (lead_id, raw_payload_id, gateway, transaction_id, transaction_time, product_id, product_name, product_niche, quantity, amount_usd, payment_method, payment_status, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(6))",
-        (lead_id, raw_payload_id, gateway, transaction_id, transaction_time, product_id, product_name, product_niche, quantity, amount_usd, payment_method, payment_status),
-    )
-    oid = cur.lastrowid
-    if not oid:
-        await cur.execute("SELECT LAST_INSERT_ID()")
-        row = await cur.fetchone()
-        oid = row[0]
-    return int(oid)
-
-
-async def _insert_lead_event(cur: aiomysql.Cursor, order_id: int, transaction_id: str, correlation_id: str, event: str, gateway_time: datetime, persisted_at: datetime, lag_seconds: int) -> int:
-    await cur.execute(
-        "INSERT INTO lead_events (order_id, transaction_id, correlation_id, event, gateway_time, persisted_at, lag_seconds) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-        (order_id, transaction_id, correlation_id, event, gateway_time, persisted_at, lag_seconds),
-    )
-    eid = cur.lastrowid
-    if not eid:
-        await cur.execute("SELECT LAST_INSERT_ID()")
-        row = await cur.fetchone()
-        eid = row[0]
-    return int(eid)
+    return int(row[0]), int(row[1]), int(row[2])
 
 
 async def _ensure_distribution_entries(cur: aiomysql.Cursor, order_id: int) -> None:
@@ -202,24 +206,26 @@ async def _process_once(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio
     raw_payload_id = msg_obj.get("id_raw_payload")
     correlation_id = msg_obj.get("correlation_id")
 
-    # DB operations
+    # compute persisted timestamp and lag before DB call
+    persisted_at = datetime.now(UTC).replace(tzinfo=None)
+    # use transaction_time (the actual event time) to compute lag
+    lag_seconds = int((persisted_at - transaction_time_dt).total_seconds())
+
+    # DB operations — leads, orders and lead_events are inserted atomically
+    # via the sp_insert_lead stored procedure
     try:
         async with pool.acquire() as conn:
             async with conn.cursor() as cur:
-                lead_id = await _ensure_lead(conn, cur, email, email_raw, first_name, last_name, phone, phone_raw, phone_valid, country)
-                # use transaction_time_dt for orders.transaction_time
-                order_id = await _ensure_order(conn, cur, lead_id, raw_payload_id, gateway, transaction_id, transaction_time_dt, product_id, product_name, product_niche, quantity, amount_usd, payment_method, payment_status)
+                lead_id, order_id, _event_id = await _call_sp_insert_lead(
+                    cur,
+                    email, email_raw, first_name, last_name,
+                    phone, phone_raw, phone_valid, country,
+                    raw_payload_id, gateway, transaction_id, transaction_time_dt,
+                    product_id, product_name, product_niche,
+                    quantity, amount_usd, payment_method, payment_status,
+                    correlation_id, event, gateway_time, persisted_at, lag_seconds,
+                )
                 await _ensure_distribution_entries(cur, order_id)
-            # commit to persist lead/order/distribution entries
-            await conn.commit()
-
-            # compute persisted timestamp and lag after commit
-            persisted_at = datetime.now(UTC).replace(tzinfo=None)
-            # use transaction_time (the actual event time) to compute lag
-            lag_seconds = int((persisted_at - transaction_time_dt).total_seconds())
-
-            async with conn.cursor() as cur:
-                await _insert_lead_event(cur, order_id, transaction_id, correlation_id, event, gateway_time, persisted_at, lag_seconds)
             await conn.commit()
     except Exception as exc:
         # wrap DB/publish errors as ProcessingError so retry logic can act on them
