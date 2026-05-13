@@ -29,8 +29,8 @@ CREATE TABLE IF NOT EXISTS processed_webhooks (
         event
     ),
 
-    INDEX idx_processed_webhooks_correlation_id (correlation_id)
-    INDEX idx_processed_webhooks_transaction_id (transaction_id)
+    INDEX idx_processed_webhooks_correlation_id (correlation_id),
+    INDEX idx_processed_webhooks_transaction_id (transaction_id),
     INDEX idx_processed_webhooks_event (event)
 
 ) ENGINE=InnoDB
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS leads (
 
     UNIQUE KEY uq_leads_email (email),
 
-    INDEX idx_leads_country (country)
+    INDEX idx_leads_country (country),
     INDEX idx_leads_email (email)
 
 ) ENGINE=InnoDB

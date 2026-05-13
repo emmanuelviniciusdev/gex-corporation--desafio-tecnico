@@ -6,6 +6,8 @@ requires-python = ">=3.13"
 dependencies = [
     "aio-pika>=8.3.0",
     "aiomysql>=0.1.0",
+    # Required by PyMySQL for MySQL 8's caching_sha2_password/sha256_password auth
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

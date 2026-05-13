@@ -5,16 +5,18 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: root
+      # Ensure initialization scripts run against this database
+      MYSQL_DATABASE: db_integration
     ports:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./integration_api/sql:/docker-entrypoint-initdb.d
+      - ./integration_api/sql/migration:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -60,6 +62,57 @@ services:
       mysql:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  integration-consumer-webhook:
+    build:
+      context: integration_consumer_webhook
+      dockerfile: Dockerfile
+    container_name: integration_consumer_webhook
+    restart: unless-stopped
+    environment:
+      # RabbitMQ connection
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      MQ_PREFETCH: "32"           # messages prefetched per consumer for better throughput
+      # MySQL connection
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: db_integration
+      # In-process async concurrency (number of parallel handler tasks)
+      CONSUMER_CONCURRENCY: "20"
+      # Logging
+      LOG_LEVEL: INFO
+    depends_on:
+      mysql:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  integration-consumer-channels:
+    build:
+      context: integration_consumer_channels
+      dockerfile: Dockerfile
+    container_name: integration_consumer_channels
+    restart: unless-stopped
+    environment:
+      # RabbitMQ connection
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      MQ_PREFETCH: "32"
+      # MySQL connection (used to mark distribution_status delivered)
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: db_integration
+      # Parallel handler tasks inside the process
+      CONSUMER_CONCURRENCY: "20"
+      LOG_LEVEL: INFO
+    depends_on:
+      mysql:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
