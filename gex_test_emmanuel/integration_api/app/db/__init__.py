@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, DateTime, Index, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -38,7 +38,24 @@ class ProcessedWebhook(Base):
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
 
+
+class LeadDeadLetter(Base):
+    __tablename__ = "lead_dead_letter"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    origin: Mapped[str] = mapped_column(String(50), nullable=False)
+    raw_payload_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("raw_payloads.id"), nullable=True
+    )
+    payload: Mapped[str] = mapped_column(Text, nullable=False)
+    error_message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+
     __table_args__ = (
-        Index("uk_transaction_event", "transaction_id", "event", unique=True),
-        Index("idx_processed_correlation_id", "correlation_id"),
+        Index("idx_dlq_origin_created", "origin", "created_at"),
+        Index("idx_dlq_correlation", "correlation_id"),
+        Index("idx_dlq_raw_payload", "raw_payload_id"),
     )

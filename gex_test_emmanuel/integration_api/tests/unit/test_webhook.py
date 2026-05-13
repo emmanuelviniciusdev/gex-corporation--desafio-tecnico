@@ -1,6 +1,6 @@
 import base64
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -164,3 +164,40 @@ class TestDecryptGrummerPayload:
             encrypted_payload = EncryptedPayload(iv="dGVzdA==", ciphertext="dGVzdA==")
             with pytest.raises(ValueError, match="invalid grummer key"):
                 _decrypt_grummer_payload(encrypted_payload)
+
+
+class TestDeadLetterInsertion:
+    def test_inserts_dead_letter_on_decrypt_failed(self, client):
+        # Invalid encrypted payload triggers decrypt_failed branch
+        invalid_encrypted = {"iv": "invalid", "ciphertext": "invalid"}
+
+        with patch("app.routers.webhook.publish_message_from_app", new=AsyncMock()) as _pub, \
+             patch("app.routers.webhook._insert_dead_letter", new=AsyncMock()) as ins_dl:
+            resp = client.post(
+                "/webhooks/grummer",
+                json=invalid_encrypted,
+                headers={"X-GR-Encrypted": "true"},
+            )
+
+        assert resp.status_code == 204
+        # Insert must have been attempted exactly once
+        assert ins_dl.await_count == 1
+        # Validate origin contains the gateway
+        args, kwargs = ins_dl.call_args
+        # helper called as _insert_dead_letter(db, correlation_id=..., origin=..., ...)
+        assert "origin" in kwargs
+        assert kwargs["origin"].startswith("webhook.grummer")
+
+    def test_inserts_dead_letter_on_schema_invalid(self, client):
+        # Minimal invalid payload for lous gateway
+        invalid_payload = {"transaction_id": "missing-required", "event": "order.approved"}
+
+        with patch("app.routers.webhook.publish_message_from_app", new=AsyncMock()) as _pub, \
+             patch("app.routers.webhook._insert_dead_letter", new=AsyncMock()) as ins_dl:
+            resp = client.post("/webhooks/lous", json=invalid_payload)
+
+        assert resp.status_code == 204
+        assert ins_dl.await_count == 1
+        args, kwargs = ins_dl.call_args
+        assert "origin" in kwargs
+        assert kwargs["origin"].startswith("webhook.lous")

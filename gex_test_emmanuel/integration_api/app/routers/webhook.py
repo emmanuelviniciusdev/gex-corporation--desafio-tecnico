@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis import get_redis
-from app.db import ProcessedWebhook, RawPayload
+from app.db import LeadDeadLetter, ProcessedWebhook, RawPayload
 from app.models.webhook import DuplicateResponse, EncryptedPayload, Payload
 from app.utils.rabbitmq import publish_message_from_app
 
@@ -143,6 +143,35 @@ async def _persist_raw_payload(
     return int(raw_payload.id)
 
 
+async def _insert_dead_letter(
+    db: AsyncSession,
+    *,
+    correlation_id: str | None,
+    origin: str,
+    raw_payload_id: int | None,
+    payload: str,
+    error_message: str,
+) -> None:
+    """Insert a row into lead_dead_letter. Log-and-swallow failures.
+
+    This mirrors the consumer-side behavior: dead-letter persistence must not
+    disrupt the request flow.
+    """
+    try:
+        dl = LeadDeadLetter(
+            correlation_id=correlation_id,
+            origin=origin,
+            raw_payload_id=raw_payload_id,
+            payload=payload,
+            error_message=error_message,
+            created_at=datetime.now(UTC),
+        )
+        db.add(dl)
+        await db.commit()
+    except Exception:
+        logger.exception("failed to insert dead letter entry (webhook)")
+
+
 @router.post("/webhooks/{gateway}", response_model=None)
 async def receive_webhook(
     gateway: Literal["grummer", "lous"],
@@ -216,9 +245,16 @@ async def receive_webhook(
     logger.info("Raw payload persisted", extra={"correlation_id": correlation_id, "raw_id": raw_id})
 
     if decrypt_failed_reason:
-        payload_for_event = decrypted_body if decrypted_body is not None else (
-            json.dumps(payload_data, default=str) if isinstance(payload_data, dict) else original_body
+        payload_for_event = (
+            decrypted_body
+            if decrypted_body is not None
+            else (
+                json.dumps(payload_data, default=str)
+                if isinstance(payload_data, dict)
+                else original_body
+            )
         )
+        # Publish dead event
         try:
             await publish_message_from_app(
                 request.app,
@@ -232,9 +268,21 @@ async def receive_webhook(
                     "payload": payload_for_event,
                 },
             )
-            logger.info("Published decrypt_failed to RabbitMQ", extra={"correlation_id": correlation_id})
+            logger.info(
+                "Published decrypt_failed to RabbitMQ",
+                extra={"correlation_id": correlation_id},
+            )
         except Exception:
             logger.exception("Failed to publish decrypt_failed message")
+        # Also persist into lead_dead_letter (best-effort)
+        await _insert_dead_letter(
+            db,
+            correlation_id=correlation_id,
+            origin=f"webhook.{gateway}",
+            raw_payload_id=raw_id,
+            payload=payload_for_event or "",
+            error_message=decrypt_failed_reason,
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     normalized_payload, invalid_email, invalid_phone = _normalize_payload(payload_data)
@@ -249,7 +297,10 @@ async def receive_webhook(
 
     if not schema_valid:
         reason = schema_invalid_reason or json.dumps(validation_errors, default=str)
-        payload_for_event = json.dumps(normalized_payload, default=str) if normalized_payload else original_body
+        payload_for_event = (
+            json.dumps(normalized_payload, default=str) if normalized_payload else original_body
+        )
+        # Publish dead event
         try:
             await publish_message_from_app(
                 request.app,
@@ -263,9 +314,21 @@ async def receive_webhook(
                     "payload": payload_for_event,
                 },
             )
-            logger.info("Published schema_invalid to RabbitMQ", extra={"correlation_id": correlation_id})
+            logger.info(
+                "Published schema_invalid to RabbitMQ",
+                extra={"correlation_id": correlation_id},
+            )
         except Exception:
             logger.exception("Failed to publish schema_invalid message")
+        # Also persist into lead_dead_letter (best-effort)
+        await _insert_dead_letter(
+            db,
+            correlation_id=correlation_id,
+            origin=f"webhook.{gateway}",
+            raw_payload_id=raw_id,
+            payload=payload_for_event or "",
+            error_message=reason,
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     transaction_id = normalized_payload.get("transaction_id")

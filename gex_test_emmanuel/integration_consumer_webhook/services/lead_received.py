@@ -129,6 +129,32 @@ async def _publish_consumer_failed(publish_channel: aio_pika.Channel, msg_obj: d
         logger.exception("failed to publish lead.dead.consumer_failed")
 
 
+async def _insert_dead_letter(
+    pool: aiomysql.Pool,
+    correlation_id: str | None,
+    origin: str,
+    raw_payload_id: int | None,
+    payload: str,
+    error_message: str,
+) -> None:
+    """Persist a dead-letter entry into the lead_dead_letter table.
+
+    Failures are logged but never re-raised so as not to disrupt retry/shutdown flow.
+    """
+    try:
+        async with pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "INSERT INTO lead_dead_letter"
+                    " (correlation_id, origin, raw_payload_id, payload, error_message, created_at)"
+                    " VALUES (%s, %s, %s, %s, %s, NOW(6))",
+                    (correlation_id, origin, raw_payload_id, payload, error_message),
+                )
+            await conn.commit()
+    except Exception:
+        logger.exception("failed to insert dead letter entry")
+
+
 def _get_gateway_from_message(msg_obj: dict) -> str:
     return msg_obj.get("gateway", "webhook")
 
@@ -243,7 +269,8 @@ async def _process_once(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio
 async def _process_with_retry(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio_pika.Channel) -> bool:
     """Process message with exponential backoff retries. Returns True on success.
 
-    Retries on ProcessingError. On final failure, publishes to lead.dead.consumer_failed.
+    Retries on ProcessingError. On final failure, publishes to lead.dead.consumer_failed
+    and persists a row in lead_dead_letter.
     """
     max_attempts = 3
     delays = [1, 4, 16]
@@ -256,13 +283,21 @@ async def _process_with_retry(msg_obj: dict, pool: aiomysql.Pool, publish_channe
             if attempt < max_attempts:
                 await asyncio.sleep(delays[attempt - 1])
                 continue
-            # final failure: publish to dead queue
+            # final failure: publish to dead queue and persist dead letter
             tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
             error_message = f"{exc} | traceback: {''.join(tb)}"
             try:
                 await _publish_consumer_failed(publish_channel, msg_obj, error_message)
             except Exception:
                 logger.exception("failed to publish consumer_failed after retries")
+            await _insert_dead_letter(
+                pool,
+                correlation_id=msg_obj.get("correlation_id"),
+                origin=QUEUE_NAME,
+                raw_payload_id=msg_obj.get("id_raw_payload"),
+                payload=json.dumps(msg_obj, default=str),
+                error_message=error_message,
+            )
             logger.error("message processing failed after %d attempts", max_attempts)
             return False
         except Exception as exc:
@@ -276,6 +311,14 @@ async def _process_with_retry(msg_obj: dict, pool: aiomysql.Pool, publish_channe
                 await _publish_consumer_failed(publish_channel, msg_obj, error_message)
             except Exception:
                 logger.exception("failed to publish consumer_failed after unexpected error")
+            await _insert_dead_letter(
+                pool,
+                correlation_id=msg_obj.get("correlation_id"),
+                origin=QUEUE_NAME,
+                raw_payload_id=msg_obj.get("id_raw_payload"),
+                payload=json.dumps(msg_obj, default=str),
+                error_message=error_message,
+            )
             return False
 
 
