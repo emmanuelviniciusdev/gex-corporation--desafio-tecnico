@@ -100,7 +100,7 @@ async def _mark_delivered(pool: Any, order_id: int, channel: str) -> None:
         return
     try:
         async with pool.acquire() as conn:
-            async with await conn.cursor() as cur:
+            async with conn.cursor() as cur:
                 await cur.execute("SELECT created_at FROM distribution_status WHERE order_id=%s AND channel=%s LIMIT 1", (order_id, channel))
                 row = await cur.fetchone()
                 if not row:
