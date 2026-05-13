@@ -1,6 +1,6 @@
 """Business logic for the "dist.sms" queue.
 
-The handler performs a simple POST to https://foo.bar with no body and
+The handler performs a simple POST to https://webhook.site/69ea9bfe-7670-47a0-bae9-0bdcb81d9219 with no body and
 retries with exponential backoff on transient failures.
 
 Expose:
@@ -43,7 +43,7 @@ async def _publish_consumer_failed(publish_channel: aio_pika.Channel, msg_obj: d
 
 
 async def _post_once(msg_obj: dict, session: aiohttp.ClientSession) -> None:
-    url = "https://foo.bar"
+    url = "https://webhook.site/69ea9bfe-7670-47a0-bae9-0bdcb81d9219"
     try:
         async with session.post(url) as resp:
             status = resp.status
