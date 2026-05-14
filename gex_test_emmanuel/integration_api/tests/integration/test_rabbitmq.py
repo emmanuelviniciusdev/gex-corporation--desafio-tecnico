@@ -74,6 +74,6 @@ def test_publish_dead_on_schema_invalid(client):
         assert payload["gateway"] == "lous"
         assert "payload" in payload
         assert isinstance(payload["payload"], str)
-        decoded = json.loads(payload["payload"]) 
+        decoded = json.loads(payload["payload"])
         assert "transaction_id" in decoded
         assert "correlation_id" in decoded and isinstance(decoded["correlation_id"], str)
