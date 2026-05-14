@@ -12,6 +12,7 @@
 SELECT
   o.gateway,
   AVG(UNIX_TIMESTAMP(ds.delivered_at) - UNIX_TIMESTAMP(o.transaction_time)) AS avg_lag_seconds,
+  AVG(UNIX_TIMESTAMP(ds.delivered_at) - UNIX_TIMESTAMP(o.transaction_time)) / 86400 AS avg_lag_days,
   COUNT(*) AS deliveries
 FROM distribution_status AS ds
 JOIN orders AS o
@@ -33,10 +34,12 @@ ORDER BY deliveries DESC;
       each available "channel", producing a redundant result, and for this reason, I thought it would be valid to apply
       the filter on "distribution_status.status".
 */
+EXPLAIN ANALYZE
 SELECT
   ds.order_id,
   ds.channel,
-  (UNIX_TIMESTAMP(NOW(6)) - UNIX_TIMESTAMP(ds.created_at)) AS age_seconds
+  (UNIX_TIMESTAMP(NOW(6)) - UNIX_TIMESTAMP(ds.created_at)) AS age_seconds,
+  (UNIX_TIMESTAMP(NOW(6)) - UNIX_TIMESTAMP(ds.created_at)) / 60 AS age_minutes
 FROM distribution_status AS ds
 WHERE ds.status = 'pending'
   AND ds.created_at < FROM_UNIXTIME(UNIX_TIMESTAMP(NOW(6)) - 5*60)
@@ -77,16 +80,33 @@ ORDER BY hour_bucket DESC, attempts_count DESC;
 */
 SELECT
   DATE_FORMAT(ds.delivered_at, '%Y-%m-%d') AS day_str,
-  COUNT(*) AS delivered_sms,
-  SUM(CASE WHEN le.id IS NOT NULL THEN 1 ELSE 0 END) AS approved_count,
-  ROUND(100 * SUM(CASE WHEN le.id IS NOT NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS approved_rate_pct,
+  COUNT(*) AS delivered_to_sms_channel,
+  SUM(CASE WHEN le.id IS NOT NULL THEN 1 ELSE 0 END) AS order_approved_count,
+  ROUND(100 * SUM(CASE WHEN le.id IS NOT NULL THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 2) AS order_approved_rate_pct,
   (COUNT(*) - SUM(CASE WHEN le.id IS NOT NULL THEN 1 ELSE 0 END)) AS absolute_gap
 FROM distribution_status AS ds
 LEFT JOIN lead_events AS le
   ON le.order_id = ds.order_id
  AND le.event = 'order.approved'
 WHERE ds.channel = 'SMS'
-  AND ds.status = 'delivered'
   AND ds.delivered_at >= FROM_UNIXTIME(UNIX_TIMESTAMP(CURDATE()) - 7*86400)
 GROUP BY day_str
 ORDER BY day_str DESC;
+
+/**
+  5) Expected summary validation (CSV file).
+ */
+ SELECT
+  o.gateway,
+  l.country,
+  o.product_name,
+  COUNT(DISTINCT o.lead_id) AS expected_unique_approved_leads
+FROM orders AS o
+JOIN leads AS l
+  ON l.id = o.lead_id
+JOIN lead_events AS le
+  ON le.order_id = o.id
+WHERE o.payment_status = 'approved'
+  AND le.event = 'order.approved'
+GROUP BY o.gateway, l.country, o.product_name
+ORDER BY o.gateway, l.country, o.product_name;
