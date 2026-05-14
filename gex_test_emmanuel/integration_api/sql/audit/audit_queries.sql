@@ -34,7 +34,6 @@ ORDER BY deliveries DESC;
       each available "channel", producing a redundant result, and for this reason, I thought it would be valid to apply
       the filter on "distribution_status.status".
 */
-EXPLAIN ANALYZE
 SELECT
   ds.order_id,
   ds.channel,
