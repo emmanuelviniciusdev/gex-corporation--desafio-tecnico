@@ -120,6 +120,18 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  test-runner:
+    build:
+      context: test_runner
+      dockerfile: Dockerfile
+    container_name: test_runner
+    restart: "no"
+    depends_on:
+      integration-api:
+        condition: service_healthy
+    # Send webhook payloads to the integration API inside the compose network
+    command: ["python", "-m", "test_runner.main", "--url", "http://integration_api:8080"]
+
 volumes:
   mysql_data:
   redis_data:
