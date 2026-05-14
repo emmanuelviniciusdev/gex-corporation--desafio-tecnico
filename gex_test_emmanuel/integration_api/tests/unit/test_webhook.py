@@ -165,6 +165,35 @@ class TestDecryptGrummerPayload:
             with pytest.raises(ValueError, match="invalid grummer key"):
                 _decrypt_grummer_payload(encrypted_payload)
 
+    def test_decrypt_with_hex_key(self):
+        # Use the same TEST_KEY as encryption uses, but provide it as 64-hex chars
+        from tests.conftest import TEST_KEY
+
+        plaintext = json.dumps({"ok": True}).encode()
+        encrypted = encrypt_payload(plaintext)
+        encrypted_payload = EncryptedPayload.model_validate(encrypted)
+
+        hex_key = TEST_KEY.hex()
+        with patch("app.routers.webhook.settings") as mock_settings:
+            mock_settings.grummer_aes256_key_base64 = hex_key
+            result = _decrypt_grummer_payload(encrypted_payload)
+        assert result == {"ok": True}
+
+    def test_decrypt_with_base64_of_hex_ascii_key(self):
+        # Provide base64 of the hex ASCII representation of the key
+        from tests.conftest import TEST_KEY
+
+        plaintext = json.dumps({"ok": 1}).encode()
+        encrypted = encrypt_payload(plaintext)
+        encrypted_payload = EncryptedPayload.model_validate(encrypted)
+
+        hex_ascii = TEST_KEY.hex().encode()
+        b64_of_hex_ascii = base64.b64encode(hex_ascii).decode()
+        with patch("app.routers.webhook.settings") as mock_settings:
+            mock_settings.grummer_aes256_key_base64 = b64_of_hex_ascii
+            result = _decrypt_grummer_payload(encrypted_payload)
+        assert result == {"ok": 1}
+
 
 class TestDeadLetterInsertion:
     def test_inserts_dead_letter_on_decrypt_failed(self, client):

@@ -29,7 +29,7 @@ CREATE PROCEDURE sp_insert_lead(
     IN p_event           VARCHAR(50),
     IN p_gateway_time    DATETIME(6),
     IN p_persisted_at    DATETIME(6),
-    IN p_lag_seconds     INT,
+    IN p_lag_milliseconds INT,
     -- output
     OUT p_lead_id    BIGINT UNSIGNED,
     OUT p_order_id   BIGINT UNSIGNED,
@@ -79,11 +79,11 @@ BEGIN
     -- Insert lead event (unique per order + event)
     INSERT INTO lead_events (
         order_id, transaction_id, correlation_id,
-        event, gateway_time, persisted_at, lag_seconds
+        event, gateway_time, persisted_at, lag_milliseconds
     )
     VALUES (
         p_order_id, p_transaction_id, p_correlation_id,
-        p_event, p_gateway_time, p_persisted_at, p_lag_seconds
+        p_event, p_gateway_time, p_persisted_at, p_lag_milliseconds
     )
     ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id);
 

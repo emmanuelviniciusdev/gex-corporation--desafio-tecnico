@@ -27,12 +27,48 @@ IDEMPOTENCY_LOCK_TTL = 30
 IDEMPOTENCY_KEY_PREFIX = "webhook:lock:"
 
 
-def _decrypt_grummer_payload(encrypted_payload: EncryptedPayload) -> dict:
-    if not settings.grummer_aes256_key_base64:
+def _load_grummer_key() -> bytes:
+    """Return a 32‑byte AES‑256 key from settings.
+
+    Accepts the following formats for convenience:
+    - 64‑hex characters (e.g. "bd8f…f153"): interpreted as hex directly.
+    - Base64 of the 32 raw key bytes.
+    - Base64 of a 64‑char hex ASCII string (some integrations send this):
+      we decode base64, detect hex ASCII, and convert to bytes.
+    """
+    raw = settings.grummer_aes256_key_base64
+    if not raw:
         raise ValueError("missing grummer key")
-    key = base64.b64decode(settings.grummer_aes256_key_base64)
-    if len(key) != 32:
-        raise ValueError("invalid grummer key")
+
+    s = str(raw).strip()
+
+    # 1) Direct HEX (64 hex characters → 32 bytes)
+    if re.fullmatch(r"[0-9a-fA-F]{64}", s or ""):
+        return bytes.fromhex(s)
+
+    # 2) Base64 decode
+    try:
+        decoded = base64.b64decode(s)
+    except Exception as exc:
+        raise ValueError("invalid grummer key") from exc
+
+    # 2a) If base64 decodes to 32 bytes, assume raw key bytes
+    if len(decoded) == 32:
+        return decoded
+
+    # 2b) If base64 decodes to 64 ASCII hex chars, convert to bytes
+    try:
+        text = decoded.decode("ascii", errors="strict")
+        if re.fullmatch(r"[0-9a-fA-F]{64}", text):
+            return bytes.fromhex(text)
+    except Exception:
+        pass
+
+    raise ValueError("invalid grummer key")
+
+
+def _decrypt_grummer_payload(encrypted_payload: EncryptedPayload) -> dict:
+    key = _load_grummer_key()
     iv = base64.b64decode(encrypted_payload.iv)
     ciphertext = base64.b64decode(encrypted_payload.ciphertext)
     cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
@@ -245,15 +281,23 @@ async def receive_webhook(
     logger.info("Raw payload persisted", extra={"correlation_id": correlation_id, "raw_id": raw_id})
 
     if decrypt_failed_reason:
-        payload_for_event = (
-            decrypted_body
-            if decrypted_body is not None
-            else (
-                json.dumps(payload_data, default=str)
-                if isinstance(payload_data, dict)
-                else original_body
-            )
-        )
+        # Build payload JSON ensuring correlation_id is included
+        payload_dict: dict
+        if decrypted_body is not None:
+            try:
+                payload_dict = json.loads(decrypted_body)
+            except Exception:
+                payload_dict = {"raw": decrypted_body}
+        elif isinstance(payload_data, dict):
+            payload_dict = dict(payload_data)
+        else:
+            try:
+                payload_dict = json.loads(original_body)
+            except Exception:
+                payload_dict = {"raw": original_body}
+
+        payload_dict["correlation_id"] = correlation_id
+        payload_for_event = json.dumps(payload_dict, default=str)
         # Publish dead event
         try:
             await publish_message_from_app(
@@ -297,8 +341,11 @@ async def receive_webhook(
 
     if not schema_valid:
         reason = schema_invalid_reason or json.dumps(validation_errors, default=str)
+        # Ensure correlation_id is included in the payload JSON we publish
         payload_for_event = (
-            json.dumps(normalized_payload, default=str) if normalized_payload else original_body
+            json.dumps({**normalized_payload, "correlation_id": correlation_id}, default=str)
+            if normalized_payload
+            else original_body
         )
         # Publish dead event
         try:
@@ -366,11 +413,17 @@ async def receive_webhook(
                 payment_status = payment.get("status")
             if payment_status == "approved":
                 try:
-                    payload_for_event = json.dumps(normalized_payload, default=str) if normalized_payload else original_body
+                    # Inject correlation_id into the inner payload that we publish
+                    payload_for_event = (
+                        json.dumps({**normalized_payload, "correlation_id": correlation_id}, default=str)
+                        if normalized_payload
+                        else original_body
+                    )
                     await publish_message_from_app(
                         request.app,
                         "lead.received",
                         {
+                            "correlation_id": correlation_id,
                             "id_raw_payload": raw_id,
                             "id_processed_webhook": processed_id,
                             "error_message": None,

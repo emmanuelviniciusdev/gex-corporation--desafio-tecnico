@@ -1,7 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
-import aiosqlite
 import pytest
+
+try:
+    import aiosqlite  # type: ignore
+except Exception:  # pragma: no cover - environment dependent
+    aiosqlite = None  # type: ignore
+    pytestmark = pytest.mark.skip(reason="aiosqlite not installed")
 
 from services import sms
 
@@ -31,7 +36,7 @@ class ConnAdapter:
     def __init__(self, conn: aiosqlite.Connection):
         self._conn = conn
 
-    async def cursor(self):
+    def cursor(self):
         return CursorCM(self._conn)
 
     async def commit(self):
@@ -95,7 +100,8 @@ async def test_mark_delivered_with_sqlite(tmp_path):
                 status TEXT NOT NULL DEFAULT 'pending',
                 created_at TEXT NOT NULL,
                 delivered_at TEXT NULL,
-                lag_db_channel_seconds INTEGER NULL
+                lag_db_channel_milliseconds INTEGER NULL,
+                error_message TEXT NULL
             )
             """
         )
@@ -114,7 +120,7 @@ async def test_mark_delivered_with_sqlite(tmp_path):
     # assert DB updated
     async with aiosqlite.connect(db_path) as db:
         cur = await db.execute(
-            "SELECT status, delivered_at, lag_db_channel_seconds FROM distribution_status WHERE order_id=? AND channel=?",
+            "SELECT status, delivered_at, lag_db_channel_milliseconds FROM distribution_status WHERE order_id=? AND channel=?",
             (123, "SMS"),
         )
         row = await cur.fetchone()

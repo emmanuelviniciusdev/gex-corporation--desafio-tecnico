@@ -57,7 +57,10 @@ services:
     ports:
       - "8080:8080"
     env_file:
-      - integration_api/.env
+      - path: integration_api/.env
+        required: false
+      - path: integration_api/.env.example
+        required: false
     depends_on:
       mysql:
         condition: service_healthy

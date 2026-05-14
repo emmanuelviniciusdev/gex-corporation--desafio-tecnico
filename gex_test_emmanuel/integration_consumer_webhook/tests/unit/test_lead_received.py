@@ -102,6 +102,81 @@ def test_call_sp_insert_lead_returns_ids():
     assert "@_sp_insert_lead_27" in select_sql
 
 
+def test_call_sp_insert_lead_allows_null_event_id():
+    cur = _make_mock_cursor((11, 22, None))
+
+    async def _run():
+        return await _call_sp_insert_lead(
+            cur,
+            "test2@example.com",
+            "Test2@example.com",
+            "Alice",
+            "Doe",
+            None,
+            None,
+            0,
+            "US",
+            None,
+            "webhook",
+            "TX-002",
+            datetime(2024, 1, 15, 11, 0, 0),
+            "PROD-2",
+            "Product Two",
+            None,
+            2,
+            49.99,
+            "paypal",
+            "approved",
+            "corr-def",
+            "lead.received",
+            datetime(2024, 1, 15, 11, 0, 0),
+            datetime(2024, 1, 15, 11, 0, 5),
+            5,
+        )
+
+    lead_id, order_id, event_id = asyncio.run(_run())
+    assert lead_id == 11
+    assert order_id == 22
+    assert event_id is None
+
+
+def test_call_sp_insert_lead_missing_required_ids_raises():
+    # Simulate an unexpected NULL from the stored procedure for required IDs
+    cur = _make_mock_cursor((None, 33, 44))
+
+    async def _run():
+        return await _call_sp_insert_lead(
+            cur,
+            "test3@example.com",
+            "Test3@example.com",
+            "Bob",
+            "Smith",
+            None,
+            None,
+            0,
+            "US",
+            None,
+            "webhook",
+            "TX-003",
+            datetime(2024, 1, 15, 12, 0, 0),
+            "PROD-3",
+            "Product Three",
+            None,
+            1,
+            19.99,
+            "credit_card",
+            "approved",
+            "corr-ghi",
+            "lead.received",
+            datetime(2024, 1, 15, 12, 0, 0),
+            datetime(2024, 1, 15, 12, 0, 5),
+            5,
+        )
+
+    with pytest.raises(ValueError):
+        asyncio.run(_run())
+
+
 # ---------------------------------------------------------------------------
 # _process_once — happy path
 # ---------------------------------------------------------------------------
@@ -182,6 +257,20 @@ def test_process_once_happy_path():
 
     # distribution messages were published (4 channels)
     assert publish_channel.default_exchange.publish.await_count == 4
+
+    # ensure each published message payload includes correlation_id embedded
+    corr = _BASE_MSG["correlation_id"]
+    for call in publish_channel.default_exchange.publish.await_args_list:
+        # first positional arg is the aio_pika.Message
+        msg = call.args[0]
+        body = getattr(msg, "body", b"")
+        if isinstance(body, (bytes, bytearray)):
+            obj = json.loads(body.decode("utf-8"))
+        else:
+            obj = json.loads(body)
+        assert "payload" in obj
+        assert isinstance(obj["payload"], dict)
+        assert obj["payload"].get("correlation_id") == corr
 
 
 def test_process_once_missing_transaction_id_returns_without_error():

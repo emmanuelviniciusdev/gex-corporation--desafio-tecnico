@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS lead_events (
     gateway_time DATETIME(6) NOT NULL,
     persisted_at DATETIME(6) NOT NULL
         DEFAULT CURRENT_TIMESTAMP(6),
-    lag_seconds INT NOT NULL,
+    lag_milliseconds INT NOT NULL,
 
     UNIQUE KEY uq_order_event (
         order_id,
@@ -152,7 +152,8 @@ CREATE TABLE IF NOT EXISTS distribution_status (
     created_at DATETIME(6) NOT NULL
         DEFAULT CURRENT_TIMESTAMP(6),
     delivered_at DATETIME(6) NULL,
-    lag_db_channel_seconds INT NULL,
+    lag_db_channel_milliseconds INT NULL,
+    error_message TEXT NULL,
 
     UNIQUE KEY uq_dist_order_channel (
         order_id,

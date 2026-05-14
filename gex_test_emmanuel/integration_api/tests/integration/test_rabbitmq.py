@@ -23,6 +23,8 @@ def test_publish_lead_received_on_order_approved(client):
         assert isinstance(payload["payload"], str)
         decoded = json.loads(payload["payload"])
         assert decoded["transaction_id"] == "123"
+        # All messages' payloads must include correlation_id
+        assert "correlation_id" in decoded and isinstance(decoded["correlation_id"], str)
 def test_no_publish_when_payment_not_approved(client):
     payload = dict(VALID_PAYLOAD)
     payload["payment"] = dict(payload["payment"])
@@ -53,6 +55,7 @@ def test_publish_dead_on_decrypt_failed(client):
         assert "payload" in payload
         assert isinstance(payload["payload"], str)
         decoded = json.loads(payload["payload"])
+        assert "correlation_id" in decoded and isinstance(decoded["correlation_id"], str)
         # decrypted or original payload should contain either iv (grummer) or transaction_id
         assert "iv" in decoded or "transaction_id" in decoded
 
@@ -71,5 +74,6 @@ def test_publish_dead_on_schema_invalid(client):
         assert payload["gateway"] == "lous"
         assert "payload" in payload
         assert isinstance(payload["payload"], str)
-        decoded = json.loads(payload["payload"])
+        decoded = json.loads(payload["payload"]) 
         assert "transaction_id" in decoded
+        assert "correlation_id" in decoded and isinstance(decoded["correlation_id"], str)

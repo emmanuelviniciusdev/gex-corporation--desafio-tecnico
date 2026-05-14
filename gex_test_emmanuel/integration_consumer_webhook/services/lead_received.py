@@ -72,8 +72,8 @@ async def _call_sp_insert_lead(
     event: str,
     gateway_time: datetime,
     persisted_at: datetime,
-    lag_seconds: int,
-) -> tuple[int, int, int]:
+    lag_milliseconds: int,
+) -> tuple[int, int, int | None]:
     """Call the sp_insert_lead stored procedure.
 
     Atomically inserts (or retrieves existing) rows in leads, orders, and
@@ -89,13 +89,25 @@ async def _call_sp_insert_lead(
             raw_payload_id, gateway, transaction_id, transaction_time,
             product_id, product_name, product_niche,
             quantity, amount_usd, payment_method, payment_status,
-            correlation_id, event, gateway_time, persisted_at, lag_seconds,
+            correlation_id, event, gateway_time, persisted_at, lag_milliseconds,
             0, 0, 0,  # OUT: p_lead_id, p_order_id, p_event_id
         ),
     )
-    await cur.execute("SELECT @_sp_insert_lead_25, @_sp_insert_lead_26, @_sp_insert_lead_27")
+    await cur.execute(
+        "SELECT @_sp_insert_lead_25 AS lead_id, @_sp_insert_lead_26 AS order_id, @_sp_insert_lead_27 AS event_id"
+    )
     row = await cur.fetchone()
-    return int(row[0]), int(row[1]), int(row[2])
+    # The stored procedure may return NULL for event_id in idempotent/no-op cases.
+    # Treat that as "no new event row" instead of failing the whole processing.
+    lead_id = int(row[0]) if row and row[0] is not None else None
+    order_id = int(row[1]) if row and row[1] is not None else None
+    event_id = int(row[2]) if row and row[2] is not None else None
+
+    # lead_id and order_id are required for downstream processing; if missing, bubble up a clear error.
+    if lead_id is None or order_id is None:
+        raise ValueError("stored procedure did not return lead_id/order_id")
+
+    return lead_id, order_id, event_id
 
 
 async def _ensure_distribution_entries(cur: aiomysql.Cursor, order_id: int) -> None:
@@ -106,21 +118,63 @@ async def _ensure_distribution_entries(cur: aiomysql.Cursor, order_id: int) -> N
         )
 
 
-async def _publish_distribution_messages(publish_channel: aio_pika.Channel, order_id: int, transaction_id: str, payload_obj: Any) -> None:
+async def _publish_distribution_messages(
+    publish_channel: aio_pika.Channel,
+    order_id: int,
+    transaction_id: str,
+    payload_obj: Any,
+    correlation_id: str | None,
+) -> None:
+    """Publish a copy of the message to each distribution channel.
+
+    Guarantees that the nested payload includes `correlation_id`.
+    """
+    # ensure payload is a dict so we can inject correlation_id
+    try:
+        payload_for_publish = dict(payload_obj) if isinstance(payload_obj, dict) else json.loads(payload_obj)
+    except Exception:
+        # as a last resort, wrap original as-is
+        payload_for_publish = payload_obj
+
+    if isinstance(payload_for_publish, dict):
+        # Always embed/override correlation_id to guarantee contract
+        if correlation_id:
+            payload_for_publish["correlation_id"] = correlation_id
+
     for chan, queue_name in CHANNELS:
-        body = json.dumps({"order_id": order_id, "transaction_id": transaction_id, "channel": chan, "payload": payload_obj}, default=str).encode("utf-8")
+        body = json.dumps(
+            {
+                "order_id": order_id,
+                "transaction_id": transaction_id,
+                "channel": chan,
+                "payload": payload_for_publish,
+            },
+            default=str,
+        ).encode("utf-8")
         await publish_channel.default_exchange.publish(aio_pika.Message(body=body), routing_key=queue_name)
 
 
 async def _publish_consumer_failed(publish_channel: aio_pika.Channel, msg_obj: dict, error_message: str) -> None:
     # mirror shape used by other dead messages
+    payload_field = msg_obj.get("payload")
+    try:
+        payload_obj = json.loads(payload_field) if isinstance(payload_field, str) else dict(payload_field)
+    except Exception:
+        payload_obj = payload_field
+
+    # Guarantee correlation_id inside nested payload when possible
+    if isinstance(payload_obj, dict):
+        corr = msg_obj.get("correlation_id")
+        if corr:
+            payload_obj["correlation_id"] = corr
+
     dead = {
         "id_raw_payload": msg_obj.get("id_raw_payload"),
         "id_processed_webhook": msg_obj.get("id_processed_webhook"),
         "error_message": error_message,
         "gateway": msg_obj.get("gateway"),
         "received_at": msg_obj.get("received_at"),
-        "payload": msg_obj.get("payload"),
+        "payload": payload_obj,
     }
     try:
         body = json.dumps(dead, default=str).encode("utf-8")
@@ -232,10 +286,10 @@ async def _process_once(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio
     raw_payload_id = msg_obj.get("id_raw_payload")
     correlation_id = msg_obj.get("correlation_id")
 
-    # compute persisted timestamp and lag before DB call
+    # compute persisted timestamp and lag (milliseconds) before DB call
     persisted_at = datetime.now(UTC).replace(tzinfo=None)
     # use transaction_time (the actual event time) to compute lag
-    lag_seconds = int((persisted_at - transaction_time_dt).total_seconds())
+    lag_milliseconds = int(max(0, round((persisted_at - transaction_time_dt).total_seconds() * 1000)))
 
     # DB operations — leads, orders and lead_events are inserted atomically
     # via the sp_insert_lead stored procedure
@@ -249,7 +303,7 @@ async def _process_once(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio
                     raw_payload_id, gateway, transaction_id, transaction_time_dt,
                     product_id, product_name, product_niche,
                     quantity, amount_usd, payment_method, payment_status,
-                    correlation_id, event, gateway_time, persisted_at, lag_seconds,
+                    correlation_id, event, gateway_time, persisted_at, lag_milliseconds,
                 )
                 await _ensure_distribution_entries(cur, order_id)
             await conn.commit()
@@ -259,11 +313,17 @@ async def _process_once(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio
 
     # publish distribution messages (best-effort but treated as critical here)
     try:
-        await _publish_distribution_messages(publish_channel, order_id, transaction_id, payload)
+        await _publish_distribution_messages(
+            publish_channel,
+            order_id,
+            transaction_id,
+            payload,
+            correlation_id,
+        )
     except Exception as exc:
         raise ProcessingError(f"publish error: {exc}") from exc
 
-    logger.info("processed lead.received", extra={"transaction_id": transaction_id, "order_id": order_id, "lag_seconds": lag_seconds})
+    logger.info("processed lead.received", extra={"transaction_id": transaction_id, "order_id": order_id, "lag_milliseconds": lag_milliseconds})
 
 
 async def _process_with_retry(msg_obj: dict, pool: aiomysql.Pool, publish_channel: aio_pika.Channel) -> bool:

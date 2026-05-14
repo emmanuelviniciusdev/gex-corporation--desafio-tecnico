@@ -69,8 +69,7 @@ VALID_PAYLOAD = {
         "last_name": "Doe",
         "country": "US",
     },
-    "product": {"id": "p1", "name": "Product", "niche": "Tech"},
-    "quantity": 1,
+    "product": {"id": "p1", "name": "Product", "niche": "Tech", "quantity": 1},
     "payment": {"amount_usd": 99.99, "method": "credit_card", "status": "approved"},
 }
 

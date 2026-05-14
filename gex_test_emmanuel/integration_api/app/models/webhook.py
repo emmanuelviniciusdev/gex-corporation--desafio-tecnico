@@ -20,6 +20,7 @@ class ProductPayload(BaseModel):
     id: str
     name: str
     niche: str
+    quantity: int
 
 
 class PaymentPayload(BaseModel):
@@ -38,7 +39,6 @@ class Payload(BaseModel):
     event: Literal["order.approved", "order.refunded", "order.declined"]
     customer: CustomerPayload
     product: ProductPayload
-    quantity: int
     payment: PaymentPayload
 
     @field_validator("transaction_time")
