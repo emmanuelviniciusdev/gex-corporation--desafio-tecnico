@@ -235,5 +235,5 @@ Enunciado: `4. Migração entre linguagens. Cite 3 sinais que te diriam que vale
   - Operacional/custo: containers Python grandes (mem > 400–500 MB por réplica), cold start lento e pressão de GC sob pico; estimativa mostra redução de custo/latência no caminho crítico movendo só o receiver+decrypt para um binário Go leve (sidecar) mantendo o contrato do `lead.received`.
 - 3 sinais de que não vale a pena migrar:
   - Métricas indicam que o gargalo real está no MySQL ou no RabbitMQ/rede (I/O-bound), não no decrypt. Trocar a linguagem não resolveria a causa raíz.
-  - Estabilidade e segurança: fluxo crítico de cripto já está testado (test vectors), auditado e sem incidentes; reimplementar eleva risco de regressão/segurança e consome tempo de engenharia.
-  - Time/stack: equipe com maior proficiência em Python, SLOs atendidos (p95 bom, erros baixos) e escala horizontal barata o suficiente.
+  - Estabilidade e segurança: fluxo crítico de cripto já está testado, auditado e sem incidentes; reimplementar eleva risco de regressão/segurança e consome tempo de engenharia.
+  - Time/stack: equipe com maior proficiência em Python, SLOs atendidos e escala horizontal barata o suficiente.
