@@ -25,9 +25,29 @@ app = create_app()
 async def startup_event():
     try:
         from app.utils.rabbitmq import RabbitPublisher
+        import aio_pika
 
         # create publisher instance only; connection is established lazily on first publish
         app.state.rabbit = RabbitPublisher(settings.rabbitmq_url)
+
+        # Ensure RabbitMQ queues exist early so publishes from the API aren't dropped
+        try:
+            connection = await aio_pika.connect_robust(settings.rabbitmq_url)
+            async with connection:
+                channel = await connection.channel()
+                for dlq in (
+                    "lead.received",
+                    "dist.sms",
+                    "lead.dead.decrypt_failed",
+                    "lead.dead.schema_invalid",
+                    "lead.dead.consumer_failed",
+                    "channels.dead.consumer_failed",
+                ):
+                    await channel.declare_queue(dlq, durable=True)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Failed to declare DLQ queues during API startup")
     except Exception:
         import logging
 
